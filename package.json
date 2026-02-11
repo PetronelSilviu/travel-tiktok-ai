@@ -9,7 +9,16 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/core": "^8.0.2",
+    "@capacitor/ios": "^8.0.2",
+    "amadeus": "^11.0.0",
+    "dotenv": "^17.2.4",
+    "framer-motion": "^12.34.0",
+    "lucide-react": "^0.563.0",
     "next": "16.1.6",
+    "openai": "^6.18.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
