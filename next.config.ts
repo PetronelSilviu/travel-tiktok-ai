@@ -1,17 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: 'export',  // <--- ASTA E CHEIA! Creează folderul "out" pentru mobil
+  output: 'export',
   images: {
-    unoptimized: true, // Obligatoriu pentru imagini pe mobil
+    unoptimized: true,
   },
-  // Ignorăm erorile de tipare la build ca să nu ne blocheze
   typescript: {
     ignoreBuildErrors: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // Am șters partea cu eslint de aici
 };
 
 export default nextConfig;
