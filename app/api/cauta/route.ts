@@ -2,7 +2,18 @@ import { NextResponse } from 'next/server';
 import Amadeus from 'amadeus';
 import OpenAI from 'openai';
 
-// --- FUNCTII AJUTATOARE (CORECTATE) ---
+// --- CONFIGURARE API ---
+const amadeus = new Amadeus({
+    clientId: process.env.AMADEUS_API_KEY,
+    clientSecret: process.env.AMADEUS_API_SECRET,
+});
+
+const perplexity = new OpenAI({
+    apiKey: process.env.PERPLEXITY_API_KEY,
+    baseURL: 'https://api.perplexity.ai',
+});
+
+// --- FUNCTII AJUTATOARE ---
 
 function getCorsHeaders() {
     return {
@@ -12,7 +23,7 @@ function getCorsHeaders() {
     };
 }
 
-// Extrage strict 3 litere mari dintr-un text
+// Extrage strict 3 litere mari dintr-un text (ex: "Codul este OTP" -> "OTP")
 function extractIATA(text: string | null): string {
     if (!text) return 'OTP';
     const match = text.match(/\b[A-Z]{3}\b/);
@@ -33,23 +44,11 @@ function addDays(dateStr: string, days: number): string {
     return result.toISOString().split('T')[0];
 }
 
-// --- CONFIGURARE API ---
-
-const amadeus = new Amadeus({
-    clientId: process.env.AMADEUS_API_KEY,
-    clientSecret: process.env.AMADEUS_API_SECRET,
-});
-
-const perplexity = new OpenAI({
-    apiKey: process.env.PERPLEXITY_API_KEY,
-    baseURL: 'https://api.perplexity.ai',
-});
-
-// --- LOGICA DE CONVERSIE IATA ---
-
+// Conversie nume oras -> Cod IATA (Ex: Bucuresti -> OTP)
 async function getIataCode(oras: string): Promise<string> {
     const numeCurat = oras.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
+    // Dicționar rapid pentru cele mai căutate orașe
     const quickMap: { [key: string]: string } = {
         'bucuresti': 'OTP', 'iasi': 'IAS', 'cluj': 'CLJ', 'timisoara': 'TSR',
         'suceava': 'SCV', 'sibiu': 'SBZ', 'london': 'LON', 'londra': 'LON',
@@ -62,18 +61,18 @@ async function getIataCode(oras: string): Promise<string> {
         const response = await perplexity.chat.completions.create({
             model: 'sonar',
             messages: [
-                { role: 'system', content: 'You are an IATA expert. Return ONLY the 3-letter airport code for the city provided. No explanation, just the code.' },
+                { role: 'system', content: 'You are an IATA expert. Return ONLY the 3-letter airport code. No explanation.' },
                 { role: 'user', content: `What is the IATA code for ${oras}?` }
             ]
         });
         return extractIATA(response.choices[0].message.content);
     } catch (e) {
         console.error("AI IATA Error:", e);
-        return 'OTP';
+        return 'OTP'; // Fallback
     }
 }
 
-// --- HANDLER PRINCIPAL ---
+// --- HANDLERS ---
 
 export async function OPTIONS() {
     return NextResponse.json({}, { headers: getCorsHeaders() });
@@ -82,95 +81,90 @@ export async function OPTIONS() {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        console.log("📥 Date primite:", JSON.stringify(body));
+        console.log("📥 DATE PRIMITE DE LA TELEFON:", JSON.stringify(body));
 
-        const { tipCautare, origine, destinatie, vibe, buget, dataInput, tipData, flexibil, nrNopti, monedaPreferred } = body;
+        const { tipCautare, origine, destinatie, vibe, buget, dataInput, tipData, nrNopti, monedaPreferred } = body;
         const moneda = monedaPreferred || 'EUR';
 
         if (!origine || !dataInput) {
             return NextResponse.json({ status: 'no_data', message: "Alege orașul de plecare și data." }, { headers: getCorsHeaders() });
         }
 
-        // --- 0. CONVERSIE IATA (Dovedit că funcționează) ---
-        console.log(`🔍 Procesez originea: ${origine}`);
-        let codPlecare = await getIataCode(origine);
-        console.log(`✅ Cod plecare final: ${codPlecare}`);
+        // --- 1. CONVERSIE IATA (SIGURANȚĂ MAXIMĂ) ---
+        const iataPlecare = await getIataCode(origine);
+        console.log(`✅ CONVERSIE REUȘITĂ: ${origine} -> ${iataPlecare}`);
 
-        let targetIATA = '';
-        let targetNume = '';
-        let dataPlecare = '';
-        let dataIntoarcere = '';
+        let iataSosire = '';
+        let numeDestinatie = '';
         let motivatieAI = '';
 
-        // --- 1. PROCESARE DATA ---
-        if (tipData === 'luna') {
-            const datePrompt = `Find best cheap date in ${dataInput} for flight from ${codPlecare}. Return ONLY YYYY-MM-DD.`;
-            const aiDate = await perplexity.chat.completions.create({ model: 'sonar', messages: [{ role: 'user', content: datePrompt }] });
-            const matchDate = aiDate.choices[0].message.content?.match(/\d{4}-\d{2}-\d{2}/);
-            dataPlecare = matchDate ? matchDate[0] : `${dataInput}-15`;
+        // --- 2. STABILIRE DESTINAȚIE ---
+        if (tipCautare === 'exact' && destinatie) {
+            iataSosire = await getIataCode(destinatie);
+            numeDestinatie = destinatie;
         } else {
-            dataPlecare = dataInput;
-        }
+            let context = tipCautare === 'global' ? `anywhere in the world with vibe "${vibe}"` : `in Europe with vibe "${vibe}"`;
+            const strategyPrompt = `Pick ONE travel destination for ${context}. Departure ${iataPlecare}, Date ${dataInput}. Return JSON: { "oras": "Name", "iata": "3-LETTER-CODE", "motiv": "Short reason" }`;
 
+            const aiStrategy = await perplexity.chat.completions.create({ model: 'sonar', messages: [{ role: 'user', content: strategyPrompt }] });
+
+            try {
+                const jsonMatch = aiStrategy.choices[0].message.content?.match(/\{[\s\S]*\}/);
+                const choice = JSON.parse(jsonMatch ? jsonMatch[0] : "{}");
+                iataSosire = extractIATA(choice.iata);
+                numeDestinatie = choice.oras;
+                motivatieAI = choice.motiv;
+            } catch(e) {
+                iataSosire = 'NAP'; numeDestinatie = 'Napoli';
+            }
+        }
+        console.log(`🎯 Destinație: ${numeDestinatie} (${iataSosire})`);
+
+        // --- 3. PROCESARE DATE ZBOR ---
+        const dataPlecare = tipData === 'luna' ? `${dataInput}-15` : dataInput;
+        let dataIntoarcere = '';
         if (nrNopti && parseInt(nrNopti) > 0) {
             dataIntoarcere = addDays(dataPlecare, parseInt(nrNopti));
         }
 
-        // --- 2. DESTINATIE ---
-        if (tipCautare === 'exact') {
-            targetIATA = await getIataCode(destinatie);
-            targetNume = destinatie;
-        } else {
-            let context = tipCautare === 'global' ? `anywhere in the world with vibe "${vibe}"` : `in Europe with vibe "${vibe}"`;
-            const strategyPrompt = `Pick ONE travel destination for ${context}. Departure ${codPlecare}, Date ${dataPlecare}. Return JSON: { "oras": "Name", "iata": "3-LETTER-CODE", "motiv": "Short reason" }`;
-            const aiStrategy = await perplexity.chat.completions.create({ model: 'sonar', messages: [{ role: 'user', content: strategyPrompt }] });
-
-            let choice: any = {};
-            try {
-                const jsonMatch = aiStrategy.choices[0].message.content?.match(/\{[\s\S]*\}/);
-                choice = JSON.parse(jsonMatch ? jsonMatch[0] : "{}");
-            } catch(e) { choice = { iata: 'NAP', oras: 'Napoli' }; }
-
-            targetIATA = extractIATA(choice.iata);
-            targetNume = choice.oras;
-            motivatieAI = choice.motiv;
-        }
-        console.log(`🎯 Destinație finală: ${targetNume} (${targetIATA})`);
-
-        // --- 3. ZBOR (Amadeus) ---
+        // --- 4. CĂUTARE AMADEUS ---
         let zbor = null;
-        let searchParams: any = {
-            originLocationCode: codPlecare,
-            destinationLocationCode: targetIATA,
+        const searchParams: any = {
+            originLocationCode: iataPlecare, // FOLOSIM CODUL DE 3 LITERE
+            destinationLocationCode: iataSosire,
             departureDate: dataPlecare,
             adults: 1,
-            max: 5,
+            max: 3,
             currencyCode: moneda
         };
         if (dataIntoarcere) searchParams.returnDate = dataIntoarcere;
 
+        console.log(`✈️ Cerere Amadeus: ${searchParams.originLocationCode} -> ${searchParams.destinationLocationCode}`);
+
         try {
-            console.log("✈️ Interoghez Amadeus...");
             const flightResp = await amadeus.shopping.flightOffersSearch.get(searchParams);
             if (flightResp.data && flightResp.data.length > 0) {
                 zbor = flightResp.data[0];
             }
         } catch (err: any) {
-            console.error("❌ Eroare Amadeus:", err.response?.body || err.message);
+            console.error("❌ EROARE AMADEUS:", err.response?.body || err.message);
         }
 
         if (!zbor) {
-            return NextResponse.json({ status: 'no_data', message: `Nu am găsit zboruri din ${codPlecare} spre ${targetNume} la data de ${dataPlecare}.` }, { headers: getCorsHeaders() });
+            return NextResponse.json({
+                status: 'no_data',
+                message: `Nu am găsit zboruri din ${iataPlecare} spre ${numeDestinatie}.`
+            }, { headers: getCorsHeaders() });
         }
 
         const pretZbor = parseFloat(zbor.price.total);
 
-        // --- 4. HOTEL ---
+        // --- 5. HOTEL (OPȚIONAL) ---
         let pretHotelNum = 0;
-        let hotelNume = "Hotel local";
+        let hotelNume = "Hotel mediu";
         if (dataIntoarcere && nrNopti) {
             try {
-                const hotelPrompt = `Cost for 3* hotel in ${targetNume} for ${nrNopti} nights in ${moneda}. JSON: { "nume": "Hotel Name", "pret_total": "150" }`;
+                const hotelPrompt = `Cost for 3* hotel in ${numeDestinatie} for ${nrNopti} nights in ${moneda}. JSON: { "nume": "Hotel Name", "pret_total": "150" }`;
                 const aiHotel = await perplexity.chat.completions.create({ model: 'sonar', messages: [{ role: 'user', content: hotelPrompt }] });
                 const jsonMatch = aiHotel.choices[0].message.content?.match(/\{[\s\S]*\}/);
                 const hData = JSON.parse(jsonMatch ? jsonMatch[0] : "{}");
@@ -179,22 +173,17 @@ export async function POST(request: Request) {
             } catch(e) {}
         }
 
-        // --- 5. TIKTOK CONTENT ---
-        const oferta = {
-            origine: codPlecare, destinatie: targetNume, aeroport_sosire: targetIATA,
-            data: dataPlecare, data_intors: dataIntoarcere || null,
-            pret: pretZbor, moneda, nr_nopti: nrNopti || 0,
-            pret_hotel_num: pretHotelNum, total_vacanta: Math.floor(pretZbor + pretHotelNum)
-        };
+        const totalVacanta = Math.floor(pretZbor + pretHotelNum);
 
-        const scriptPrompt = `TikTok Viral Script for trip to ${oferta.destinatie}. Total: ${oferta.total_vacanta} ${moneda}. JSON: { "hook_vizual": "...", "descriere": "...", "sunet": "...", "script_audio": "..." }`;
+        // --- 6. GENERARE CONȚINUT TIKTOK ---
+        const scriptPrompt = `TikTok Script trip to ${numeDestinatie}. Total: ${totalVacanta} ${moneda}. JSON: { "hook_vizual": "...", "descriere": "...", "sunet": "...", "script_audio": "..." }`;
         const aiContent = await perplexity.chat.completions.create({ model: 'sonar', messages: [{ role: 'user', content: scriptPrompt }] });
 
         let contentJson = {
-            hook_vizual: `VACANȚĂ ${oferta.destinatie.toUpperCase()}`,
-            descriere: `Pachet complet la doar ${oferta.total_vacanta} ${moneda}!`,
-            sunet: "Trending Music",
-            script_audio: `Iată următoarea ta aventură în ${oferta.destinatie}!`,
+            hook_vizual: `VACANȚĂ ${numeDestinatie.toUpperCase()}`,
+            descriere: `Pachet complet la doar ${totalVacanta} ${moneda}!`,
+            sunet: "Trending Travel Sound",
+            script_audio: `Nu rata oferta asta pentru ${numeDestinatie}!`,
             hotel_nume: hotelNume
         };
 
@@ -203,11 +192,27 @@ export async function POST(request: Request) {
             if (jsonMatch) contentJson = { ...contentJson, ...JSON.parse(jsonMatch[0]) };
         } catch (e) {}
 
-        console.log("✅ Căutare terminată cu succes!");
-        return NextResponse.json({ status: 'success', oferta, content: contentJson }, { headers: getCorsHeaders() });
+        console.log("✅ Succes final!");
+        return NextResponse.json({
+            status: 'success',
+            oferta: {
+                origine: origine.toUpperCase(),
+                aeroport_plecare: iataPlecare,
+                destinatie: numeDestinatie,
+                aeroport_sosire: iataSosire,
+                data: dataPlecare,
+                data_intors: dataIntoarcere || null,
+                pret: pretZbor,
+                moneda: moneda,
+                nr_nopti: nrNopti || 0,
+                pret_hotel_num: pretHotelNum,
+                total_vacanta: totalVacanta
+            },
+            content: contentJson
+        }, { headers: getCorsHeaders() });
 
     } catch (error: any) {
-        console.error("🔥 Server Error:", error);
+        console.error("🔥 EROARE CRITICĂ SERVER:", error);
         return NextResponse.json({ status: 'error', message: error.message }, { status: 500, headers: getCorsHeaders() });
     }
 }
