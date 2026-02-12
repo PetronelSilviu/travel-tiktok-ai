@@ -207,4 +207,3 @@ export async function POST(request: Request) {
     } catch (error: any) {
         return NextResponse.json({ status: 'error', message: error.message }, { status: 500, headers: getCorsHeaders() });
     }
-}

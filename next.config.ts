@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // output: 'export',  // <--- ASTA E CHEIA! Creează folderul "out" pentru mobil
+  output: 'export',  // <--- ASTA E CHEIA! Creează folderul "out" pentru mobil
   images: {
     unoptimized: true, // Obligatoriu pentru imagini pe mobil
   },

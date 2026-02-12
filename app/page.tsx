@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { Plane, Sparkles, Dice5, Globe, Music, MapPin, Loader2, Copy, Calendar, CalendarRange, BedDouble } from 'lucide-react';
+import { CapacitorHttp } from '@capacitor/core'; // <--- IMPORT NOU
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
@@ -57,10 +58,12 @@ export default function Home() {
     setResult(null);
 
     try {
-      const res = await fetch('https://travel-tiktok-ai.vercel.app/api/cauta', {
-        method: 'POST',
+      // --- SOLUȚIA NUCLEARĂ: CapacitorHttp ---
+      // Aceasta trece de securitatea browserului și merge direct la server
+      const options = {
+        url: 'https://travel-tiktok-ai.vercel.app/api/cauta',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        data: { // La CapacitorHttp folosim 'data', nu 'body', și trimitem Obiect, nu String!
           tipCautare: mode,
           origine,
           destinatie: mode === 'exact' ? destinatie : '',
@@ -69,15 +72,21 @@ export default function Home() {
           dataInput: dataValue,
           tipData, flexibil, nrNopti,
           monedaPreferred: userCurrency
-        }),
-      });
+        },
+      };
+
+      const response = await CapacitorHttp.post(options);
       
-      const dataRes = await res.json();
+      // Capacitor pune răspunsul direct în .data
+      const dataRes = response.data;
+
       if(dataRes.status === 'success') setResult(dataRes);
-      else alert(dataRes.message || "Fără rezultate.");
-    } catch(e) { 
-        console.error(e);
-        alert("Eroare conexiune."); 
+      else alert(dataRes.message || "Fără rezultate (Serverul a răspuns, dar fără oferte).");
+
+    } catch(e: any) { 
+        console.error("Eroare Capacitor:", e);
+        // Afișăm eroarea completă ca să știm ce se întâmplă
+        alert("Eroare conexiune: " + (e.message || JSON.stringify(e))); 
     }
     finally { setLoading(false); }
   };
@@ -90,10 +99,7 @@ export default function Home() {
 
   const getSkyscannerLink = () => {
     if (!result?.oferta?.aeroport_sosire || !result?.oferta?.data) return "#";
-    
-    // FOLOSIM CODUL DE PLECARE CORECT (ex: IAS)
     const o = result.oferta.aeroport_plecare || "OTP"; 
-    
     const d = result.oferta.aeroport_sosire.toLowerCase();
     const d1 = result.oferta.data.slice(2).replace(/-/g, '');
     if(result.oferta.data_intors) {
