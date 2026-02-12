@@ -5,7 +5,7 @@ android {
     compileSdkVersion rootProject.ext.compileSdkVersion
 
     defaultConfig {
-        applicationId "com.petronel.traveltok"
+        applicationId "com.petrwonel.traveltok"
         minSdkVersion rootProject.ext.minSdkVersion // Aici am corectat "exta" in "ext"
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
