@@ -79,6 +79,7 @@ export default function Home() {
       
       // Capacitor pune răspunsul direct în .data
       const dataRes = response.data;
+      alert("Status: " + dataRes.status + " | Mesaj: " + dataRes.message);
 
       if(dataRes.status === 'success') setResult(dataRes);
       else alert(dataRes.message || "Fără rezultate (Serverul a răspuns, dar fără oferte).");
