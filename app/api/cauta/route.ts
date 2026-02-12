@@ -62,15 +62,31 @@ export async function POST(request: Request) {
         let motivatieAI = '';
 
         // --- 0. PRELUCRARE ORIGINE ---
-        if (origine.length > 3) {
-            console.log(`🔍 Conversie IATA pentru: ${origine}`);
-            const originPrompt = `Care este codul IATA al aeroportului din orașul "${origine}"? Răspunde DOAR cu codul de 3 litere (Ex: IAS).`;
-            const aiOrigin = await perplexity.chat.completions.create({ model: 'sonar', messages: [{ role: 'user', content: originPrompt }] });
-            codPlecare = extractIATA(aiOrigin.choices[0].message.content);
+        let codPlecare = origine.trim();
+
+        // Dacă originea nu este deja un cod de 3 litere, întrebăm AI-ul
+        if (codPlecare.length !== 3) {
+            console.log(`🔍 Conversie nume oraș în IATA pentru: ${codPlecare}`);
+            // Curățăm diacriticele manual pentru siguranță înainte de AI
+            const origineCurat = codPlecare.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+            const originPrompt = `Care este codul IATA al aeroportului principal din orașul "${origineCurat}"? Răspunde DOAR cu codul de 3 litere (Ex: OTP pentru București, IAS pentru Iași).`;
+
+            try {
+                const aiOrigin = await perplexity.chat.completions.create({
+                    model: 'sonar',
+                    messages: [{ role: 'user', content: originPrompt }]
+                });
+                codPlecare = extractIATA(aiOrigin.choices[0].message.content);
+            } catch (aiErr) {
+                console.error("Eroare AI Origine:", aiErr);
+                codPlecare = "OTP"; // Fallback la București dacă AI-ul crapă
+            }
         } else {
-            codPlecare = origine.toUpperCase();
+            codPlecare = codPlecare.toUpperCase();
         }
-        console.log(`✅ Origine finală: ${codPlecare}`);
+
+        console.log(`✅ Origine finală folosită în Amadeus: ${codPlecare}`);
 
         // --- 1. DATA ---
         if (tipData === 'luna') {
